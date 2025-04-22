@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; background: #0d1117; color: white; }
+    .hidden { display: none; }
+    .preview-img { width: 64px; height: 64px; border-radius: 9999px; object-fit: cover; }
+  </style>
+</head>
+<body class="p-4">
+  <!-- Login Page -->
+  <div id="loginPage">
+    <h1 class="text-2xl font-bold mb-4">Login</h1>
+    <input id="username" class="block mb-2 w-full p-2 rounded text-black" placeholder="Username" />
+    <input id="password" class="block mb-2 w-full p-2 rounded text-black" placeholder="2-char Password" maxlength="2" />
+    <input id="imageUpload" type="file" accept="image/*" class="mb-2" />
+    <p id="imgInfo" class="text-sm text-gray-400 mb-2"></p>
+    <button onclick="login()" class="bg-blue-600 px-4 py-2 rounded font-bold">Login</button>
+  </div>
+
+  <!-- Users Page -->
+  <div id="usersPage" class="hidden">
+    <header class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold">Users</h2>
+      <button onclick="logout()" class="bg-red-600 px-2 py-1 rounded text-sm">Logout</button>
+    </header>
+    <div id="userList" class="space-y-4"></div>
+  </div>
+
+  <!-- Chat Page -->
+  <div id="chatPage" class="hidden">
+    <header class="flex items-center mb-4">
+      <button onclick="backToUsers()" class="text-white mr-4">&larr;</button>
+      <h2 id="chatUser" class="font-bold text-lg">Chat</h2>
+    </header>
+    <div id="chatBox" class="h-60 overflow-y-auto mb-2 border rounded p-2 border-white"></div>
+    <input id="chatInput" class="w-full p-2 rounded text-black mb-2" placeholder="Type a message" />
+    <button onclick="sendMessage()" class="bg-blue-600 px-4 py-2 rounded font-bold">Send</button>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyC9rehsf-0jkb9dAeT1-0Z1C-yRJ0YI9dA",
+      authDomain: "gymnm-ce84b.firebaseapp.com",
+      projectId: "gymnm-ce84b",
+      storageBucket: "gymnm-ce84b.appspot.com",
+      messagingSenderId: "474926929394",
+      appId: "1:474926929394:web:6abdb807caba2751a5c76b",
+      measurementId: "G-6R9S8LYZNF"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    let currentUser = null;
+    let selectedChatUser = null;
+
+    const imageInput = document.getElementById("imageUpload");
+    const imgInfo = document.getElementById("imgInfo");
+    let base64Image = "";
+
+    imageInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      let sizeKB = file.size / 1024;
+      imgInfo.innerText = `Original: ${Math.round(sizeKB)} KB`;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const maxSize = 740;
+          let width = img.width;
+          let height = img.height;
+
+          if (file.size / 1024 > maxSize) {
+            const scale = Math.sqrt(maxSize * 1024 / file.size);
+            width *= scale;
+            height *= scale;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          base64Image = canvas.toDataURL("image/jpeg", 0.7);
+          imgInfo.innerText += ` → Compressed: ${Math.round(base64Image.length * 0.75 / 1024)} KB`;
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    async function login() {
+      const name = document.getElementById("username").value.trim();
+      const pass = document.getElementById("password").value.trim();
+      if (!name || pass.length !== 2 || !base64Image) return alert("Fill all fields & pick image!");
+
+      const userDoc = await db.collection("users").doc(name).get();
+      if (userDoc.exists) {
+        const data = userDoc.data();
+        if (data.password === pass) {
+          currentUser = name;
+          showUsers();
+        } else {
+          alert("Wrong password");
+        }
+      } else {
+        await db.collection("users").doc(name).set({
+          password: pass,
+          photo: base64Image,
+          createdAt: new Date()
+        });
+        currentUser = name;
+        showUsers();
+      }
+    }
+
+    async function showUsers() {
+      document.getElementById("loginPage").classList.add("hidden");
+      document.getElementById("usersPage").classList.remove("hidden");
+      const snap = await db.collection("users").get();
+      const list = document.getElementById("userList");
+      list.innerHTML = "";
+      snap.forEach(doc => {
+        if (doc.id !== currentUser) {
+          const data = doc.data();
+          const div = document.createElement("div");
+          div.className = "flex items-center space-x-4 cursor-pointer";
+          div.onclick = () => openChat(doc.id);
+          div.innerHTML = `
+            <img src="${data.photo}" class="preview-img" />
+            <div>
+              <p class="font-bold">${doc.id}</p>
+              <p class="text-sm text-gray-400">Tap to chat</p>
+            </div>
+          `;
+          list.appendChild(div);
+        }
+      });
+    }
+
+    async function openChat(userId) {
+      selectedChatUser = userId;
+      document.getElementById("usersPage").classList.add("hidden");
+      document.getElementById("chatPage").classList.remove("hidden");
+      document.getElementById("chatUser").innerText = userId;
+      db.collection("messages")
+        .where("between", "in", [
+          [currentUser, userId],
+          [userId, currentUser]
+        ])
+        .orderBy("time")
+        .onSnapshot((snap) => {
+          const box = document.getElementById("chatBox");
+          box.innerHTML = "";
+          snap.forEach(doc => {
+            const msg = doc.data();
+            const align = msg.from === currentUser ? "text-right" : "text-left";
+            box.innerHTML += `<div class="${align} mb-1">${msg.text}</div>`;
+          });
+          box.scrollTop = box.scrollHeight;
+        });
+    }
+
+    async function sendMessage() {
+      const text = document.getElementById("chatInput").value.trim();
+      if (!text || !selectedChatUser) return;
+      await db.collection("messages").add({
+        from: currentUser,
+        to: selectedChatUser,
+        text,
+        time: new Date(),
+        between: [currentUser, selectedChatUser].sort()
+      });
+      document.getElementById("chatInput").value = "";
+    }
+
+    function backToUsers() {
+      document.getElementById("chatPage").classList.add("hidden");
+      document.getElementById("usersPage").classList.remove("hidden");
+    }
+
+    function logout() {
+      location.reload();
+    }
+  </script>
+</body>
+</html>
